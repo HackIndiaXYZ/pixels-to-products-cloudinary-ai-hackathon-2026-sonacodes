@@ -1,0 +1,48 @@
+:root {
+  color-scheme: light;
+  --bg: #f6f1ea;
+  --surface: #fffdfb;
+  --ink: #2c2825;
+  --muted: #6f675f;
+  --line: #e4dbd1;
+  --accent: #8d4b3c;
+  --accent-dark: #6f382d;
+  --beige: #f3eee7;
+  --shadow: 0 16px 40px rgba(44, 40, 37, 0.08);
+  font-family: Outfit, "Avenir Next", "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1, h2, h3, .wordmark {
+  font-family: "Cormorant Garamond", Georgia, serif;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+}
