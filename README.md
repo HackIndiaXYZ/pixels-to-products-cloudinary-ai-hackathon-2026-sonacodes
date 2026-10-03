@@ -201,56 +201,77 @@ Open `http://localhost:5173`. The frontend sends `/api` requests to `VITE_API_UR
 
 ## Render Deployment
 
-The repository includes [render.yaml](render.yaml), a Render Blueprint defining a FastAPI web service, a static Vite site, and PostgreSQL. The API receives the database's internal connection string, and Render provides its public hostname to the frontend build. The Blueprint selects the PostgreSQL `0.1c-256mb` plan; review current Render pricing before applying it. The backend web service uses Render's free plan and may sleep when idle.
+Deploy the application manually as two Render Web Services and one PostgreSQL database. No Blueprint is needed. Both web services use the same Git repository and branch, with separate root directories and commands.
 
-### Blueprint services and commands
+### 1. Create PostgreSQL
 
-| Service | Root directory | Build command | Start/publish settings |
-| --- | --- | --- | --- |
-| FastAPI (`wardrobeai-api`) | `backend` | `pip install -r requirements.txt` | `uvicorn app.main:app --host 0.0.0.0 --port $PORT`; health check `/health` |
-| React/Vite (`wardrobeai-frontend`) | `wardrobeAI` | `npm ci && npm run build` | Publish directory `dist`; rewrite `/*` to `/index.html` for the app's `/login`, `/register`, and `/app` paths |
-| PostgreSQL (`wardrobeai-db`) | Managed by Render | Managed by Render | Database `wardrobeai`, plan `0.1c-256mb`; linked to the backend as `DATABASE_URL` |
+In the Render Dashboard, select **New + → PostgreSQL**. Choose a region and plan, and note the database's **Internal Database URL**. Use the same region for the backend service. Do not use the local SQLite file as the production database. Review current Render pricing and database persistence/backup options before creating a production database.
 
-### Deploy steps
+### 2. Create the backend Web Service
 
-1. Push this repository to a Git provider connected to Render, then create a new Blueprint and select the repository's `render.yaml`.
-2. Review service names, regions, and the PostgreSQL plan/cost before applying the Blueprint. The frontend URL is expected to be `https://wardrobeai-frontend.onrender.com`; if Render assigns another URL, set backend `CORS_ORIGINS` to that exact origin, including `https://` and excluding a trailing slash.
-3. In the backend service's Environment settings, set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` to your Cloudinary account values. The Blueprint marks them `sync: false`, so enter them in Render; none are stored in this repository. Never define the API secret as a `VITE_` variable.
-4. Confirm `DATABASE_URL` is linked to the Render PostgreSQL database. Do not configure the production API to use a local SQLite path. Render assigns `PORT` to the backend service.
-5. Deploy both services. Check `https://<backend-host>/health`; expect HTTP 200 with `database: "ok"`. `GET /api/health` remains available to the application and reports Cloudinary configuration status.
-6. Open the static site URL and run the production checks below.
+Select **New + → Web Service**, connect the repository, and configure:
 
-### Render environment variables
+| Setting | Value |
+| --- | --- |
+| Root Directory | `backend` |
+| Runtime | Python |
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| Health Check Path | `/health` |
 
-| Variable | Service | Required value / behavior |
-| --- | --- | --- |
-| `DATABASE_URL` | Backend | Linked to the Render PostgreSQL database by the Blueprint. Render's `postgresql://` URL is normalized to SQLAlchemy's `postgresql+psycopg://` dialect. |
-| `CLOUDINARY_CLOUD_NAME` | Backend | Your Cloudinary cloud name, entered in Render. |
-| `CLOUDINARY_API_KEY` | Backend | Your Cloudinary API key, entered in Render. |
-| `CLOUDINARY_API_SECRET` | Backend | Cloudinary API secret; backend only, entered in Render. |
-| `CORS_ORIGINS` | Backend | Exact frontend origin. Blueprint default: `https://wardrobeai-frontend.onrender.com`; update if the actual frontend/custom domain differs. |
-| `COOKIE_SECURE` | Backend | `true` for HTTPS deployment. |
-| `COOKIE_SAME_SITE` | Backend | Blueprint sets `none` for separately hosted frontend/API cookies; requires `COOKIE_SECURE=true`. |
-| `SESSION_TTL_HOURS` | Backend | Blueprint sets `168`; session lifetime in hours. |
-| `PORT` | Backend | Assigned by Render and consumed by the Uvicorn start command. Do not set a fixed production port. |
-| `VITE_API_URL` | Frontend | Populated from the backend's public `RENDER_EXTERNAL_HOSTNAME` by the Blueprint. The frontend accepts a host or an `http(s)://` URL and includes credentials in API requests. |
+Add these environment variables in the backend service's Environment settings:
 
-The backend uses credentialed CORS and exact origin matching. `COOKIE_SAME_SITE=none` plus `COOKIE_SECURE=true` allows cookies on cross-origin HTTPS requests. Login and registration return a CSRF token, and state-changing requests still require the matching CSRF cookie/header. For best browser compatibility, use frontend and API custom domains under the same registrable domain, such as `app.example.com` and `api.example.com`; browsers can block cookies in a genuinely third-party context regardless of CORS. For an all-same-site deployment, `COOKIE_SAME_SITE=lax` is also appropriate.
+| Variable | Value |
+| --- | --- |
+| `DATABASE_URL` | The PostgreSQL **Internal Database URL** copied from Render. |
+| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name. |
+| `CLOUDINARY_API_KEY` | Cloudinary API key. |
+| `CLOUDINARY_API_SECRET` | Cloudinary API secret. Keep it backend-only. |
+| `CORS_ORIGINS` | The frontend service origin, added after creating that service. Exact origin, including `https://`, with no trailing slash. |
+| `COOKIE_SECURE` | `true` |
+| `COOKIE_SAME_SITE` | `none` for cross-origin HTTPS frontend/API requests. |
+| `SESSION_TTL_HOURS` | `168` (optional; this is also the default). |
 
-### PostgreSQL initialization and migrations
+Render supplies `PORT`; do not set a fixed port yourself. Never put `CLOUDINARY_API_SECRET` in the frontend service. After the first backend deploy, check `https://<backend-host>/health` for HTTP 200 and `database: "ok"`.
 
-At startup, `init_db()` creates missing tables and applies limited compatibility `ALTER TABLE` additions. There is no Alembic history or separate migration command. A new Render database initializes on the first API start. This does not copy records from local SQLite or another database; back up and migrate any data needed before directing users to production. For future versioned schema changes, introduce and run a migration tool such as Alembic before deploying the application change.
+### 3. Create the frontend Web Service
+
+Select **New + → Web Service** again and connect the same repository and branch. Configure:
+
+| Setting | Value |
+| --- | --- |
+| Root Directory | `wardrobeAI` |
+| Runtime | Node |
+| Build Command | `npm ci && npm run build` |
+| Start Command | `npm start` |
+
+Add the frontend environment variable **before deploying**, because Vite embeds it at build time:
+
+| Variable | Value |
+| --- | --- |
+| `VITE_API_URL` | `https://<backend-service-name>.onrender.com` (use the actual public backend URL from Render; no trailing slash). |
+
+The `start` script runs `serve -s dist -l tcp://0.0.0.0:$PORT`, serves the production Vite build, and falls back to `index.html` for `/login`, `/register`, and `/app` route refreshes. `serve` is declared in the frontend package dependencies. Render supplies `PORT` to the frontend web service too.
+
+### 4. Connect CORS and verify the deployment
+
+After Render assigns the frontend URL, set backend `CORS_ORIGINS` to that exact origin, such as `https://<frontend-service-name>.onrender.com`, with no path or trailing slash. Save the backend environment change and redeploy it. Check `/health` on the backend, open the frontend URL, then follow the production checklist below.
+
+The frontend sends API requests with `credentials: 'include'`. The backend uses credentialed CORS, `COOKIE_SECURE=true`, and `COOKIE_SAME_SITE=none`; CSRF validation remains enabled. If browser cookie policies block cross-site cookies, use frontend and API custom domains under the same registrable domain (for example, `app.example.com` and `api.example.com`). Do not disable CSRF checks to work around cookie/CORS problems.
+
+### Database initialization and migrations
+
+At startup, `init_db()` creates missing tables and applies limited compatibility `ALTER TABLE` additions. There is no Alembic history or separate migration command. A newly created Render database initializes when the backend starts. This does not copy records from local SQLite; export and migrate any local data you need separately before directing users to production. For future versioned schema changes, introduce and run a migration tool such as Alembic before deploying the change.
 
 ### Troubleshooting and production checklist
 
-- **API fails to start:** check build logs, `rootDir: backend`, the `app.main:app` entry point, and that the start command binds `0.0.0.0` on `$PORT`.
-- **Database connection or driver error:** confirm `DATABASE_URL` points to the Render database and the backend build installed `psycopg[binary]` from `backend/requirements.txt`. Do not use SQLite as the production database on an ephemeral service filesystem.
-- **CORS errors or failed API calls:** confirm `VITE_API_URL` points to the backend host, `CORS_ORIGINS` exactly matches the browser's frontend origin, and the backend was redeployed after configuration changes. Origins have no path or trailing slash.
-- **Session disappears after refresh or cookies are absent:** use HTTPS, `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=none` for cross-origin requests, and keep credentialed fetch enabled. Check browser cookie policy; same-site custom domains are recommended.
-- **Writes fail CSRF validation:** verify `/api/auth/csrf` succeeds, cookies are accepted, and the frontend sends the returned token in `X-CSRF-Token`. Do not disable CSRF checks.
-- **Image uploads fail:** check the three backend-only Cloudinary variables, `GET /api/health`, and Cloudinary account limits.
-- **Direct route refresh returns 404:** verify the static-site `/*` rewrite to `/index.html` is deployed.
-- [ ] `GET /health` returns 200 and reports the database as healthy.
+- **Backend does not start:** verify the service root is `backend`, dependencies installed, the entry point is `app.main:app`, and the start command binds to `0.0.0.0` and `$PORT`.
+- **Database connection/driver error:** check `DATABASE_URL` is the PostgreSQL internal URL and that `psycopg[binary]` installed from `backend/requirements.txt`.
+- **Frontend cannot reach the API:** check `VITE_API_URL` on the frontend service, rebuild after changing it, and set backend `CORS_ORIGINS` to the frontend's exact origin.
+- **Session disappears or cookies are missing:** verify both services use HTTPS, backend cookie settings are `true` and `none`, and the browser accepts the cookie context.
+- **Writes fail CSRF validation:** verify `/api/auth/csrf` succeeds and the frontend sends the returned token in `X-CSRF-Token`; keep CSRF enabled.
+- **Image uploads fail:** verify the three backend Cloudinary variables and `GET /api/health`, then check Cloudinary account limits.
+- [ ] `/health` returns 200 and reports the database as healthy.
 - [ ] Register, sign in, refresh to restore the session, and log out successfully.
 - [ ] Unauthenticated API requests are denied and writes without CSRF are rejected.
 - [ ] Upload an image and confirm its Cloudinary folder includes the authenticated user ID.
