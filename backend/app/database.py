@@ -14,6 +14,14 @@ class Base(DeclarativeBase):
     pass
 
 
+def _sqlalchemy_database_url(database_url: str) -> str:
+    if database_url.startswith("postgres://"):
+        return "postgresql+psycopg://" + database_url.removeprefix("postgres://")
+    if database_url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + database_url.removeprefix("postgresql://")
+    return database_url
+
+
 def _make_engine(database_url: str):
     if database_url.startswith("sqlite"):
         _ensure_sqlite_directory(database_url)
@@ -30,7 +38,7 @@ def _make_engine(database_url: str):
             cursor.close()
 
         return sqlite_engine
-    return create_engine(database_url)
+    return create_engine(_sqlalchemy_database_url(database_url), pool_pre_ping=True)
 
 
 def _ensure_sqlite_directory(database_url: str) -> None:

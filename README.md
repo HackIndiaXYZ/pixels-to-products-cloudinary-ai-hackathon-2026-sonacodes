@@ -12,6 +12,7 @@ WardrobeAI turns a person's clothing collection into a searchable digital wardro
 - [Technology stack](#technology-stack)
 - [Architecture and data flow](#architecture-and-data-flow)
 - [Setup](#setup)
+- [Render deployment](#render-deployment)
 - [Testing](#testing)
 - [Security and privacy](#security-and-privacy)
 - [Project structure](#project-structure)
@@ -86,7 +87,7 @@ flowchart LR
 | --- | --- |
 | Frontend | React 19, TypeScript, Vite 6, plain CSS, Cloudinary React/URL generation packages |
 | Backend | Python, FastAPI, Uvicorn, Pydantic, SQLAlchemy 2 |
-| Database | SQLite by default at `backend/data/wardrobe.db`; `DATABASE_URL` can select another SQLAlchemy database when its Python driver is installed. A PostgreSQL driver is not included in the current requirements. |
+| Database | SQLite by default at `backend/data/wardrobe.db`; PostgreSQL through `DATABASE_URL` and psycopg 3 in production. |
 | Images | Cloudinary Python SDK and Cloudinary upload/delivery APIs |
 | Authentication | `argon2-cffi` Argon2id password hashes; random opaque session tokens stored as hashes in the database and issued in HttpOnly cookies; separate CSRF token/cookie/header checks |
 | Other backend packages | `pydantic-settings`, `email-validator`, `httpx`, and `pytest` |
@@ -188,7 +189,7 @@ The API is available at `http://127.0.0.1:8000`; health check: `http://127.0.0.1
 
 ### Install and start the frontend
 
-In a second terminal, from the repository root:
+In a second terminal, from the repository root. For local development, copy `wardrobeAI/.env.example` to `wardrobeAI/.env`; it sets `VITE_API_URL=http://localhost:8000` for the local API.
 
 ```bash
 cd wardrobeAI
@@ -196,7 +197,68 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173`. Vite proxies `/api` requests to `http://127.0.0.1:8000`. Optional frontend variables are listed in [wardrobeAI/.env.example](wardrobeAI/.env.example); `VITE_API_BASE_URL` can stay empty for local development, and the cloud name can be read from the backend health endpoint. No Cloudinary secret belongs in frontend configuration.
+Open `http://localhost:5173`. The frontend sends `/api` requests to `VITE_API_URL`; the local example points directly to `http://localhost:8000`, which is allowed by the backend's default CORS origins. Optional frontend variables are listed in [wardrobeAI/.env.example](wardrobeAI/.env.example), and the cloud name can be read from the backend health endpoint. No Cloudinary secret belongs in frontend configuration.
+
+## Render Deployment
+
+The repository includes [render.yaml](render.yaml), a Render Blueprint defining a FastAPI web service, a static Vite site, and PostgreSQL. The API receives the database's internal connection string, and Render provides its public hostname to the frontend build. The Blueprint selects the PostgreSQL `0.1c-256mb` plan; review current Render pricing before applying it. The backend web service uses Render's free plan and may sleep when idle.
+
+### Blueprint services and commands
+
+| Service | Root directory | Build command | Start/publish settings |
+| --- | --- | --- | --- |
+| FastAPI (`wardrobeai-api`) | `backend` | `pip install -r requirements.txt` | `uvicorn app.main:app --host 0.0.0.0 --port $PORT`; health check `/health` |
+| React/Vite (`wardrobeai-frontend`) | `wardrobeAI` | `npm ci && npm run build` | Publish directory `dist`; rewrite `/*` to `/index.html` for the app's `/login`, `/register`, and `/app` paths |
+| PostgreSQL (`wardrobeai-db`) | Managed by Render | Managed by Render | Database `wardrobeai`, plan `0.1c-256mb`; linked to the backend as `DATABASE_URL` |
+
+### Deploy steps
+
+1. Push this repository to a Git provider connected to Render, then create a new Blueprint and select the repository's `render.yaml`.
+2. Review service names, regions, and the PostgreSQL plan/cost before applying the Blueprint. The frontend URL is expected to be `https://wardrobeai-frontend.onrender.com`; if Render assigns another URL, set backend `CORS_ORIGINS` to that exact origin, including `https://` and excluding a trailing slash.
+3. In the backend service's Environment settings, set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` to your Cloudinary account values. The Blueprint marks them `sync: false`, so enter them in Render; none are stored in this repository. Never define the API secret as a `VITE_` variable.
+4. Confirm `DATABASE_URL` is linked to the Render PostgreSQL database. Do not configure the production API to use a local SQLite path. Render assigns `PORT` to the backend service.
+5. Deploy both services. Check `https://<backend-host>/health`; expect HTTP 200 with `database: "ok"`. `GET /api/health` remains available to the application and reports Cloudinary configuration status.
+6. Open the static site URL and run the production checks below.
+
+### Render environment variables
+
+| Variable | Service | Required value / behavior |
+| --- | --- | --- |
+| `DATABASE_URL` | Backend | Linked to the Render PostgreSQL database by the Blueprint. Render's `postgresql://` URL is normalized to SQLAlchemy's `postgresql+psycopg://` dialect. |
+| `CLOUDINARY_CLOUD_NAME` | Backend | Your Cloudinary cloud name, entered in Render. |
+| `CLOUDINARY_API_KEY` | Backend | Your Cloudinary API key, entered in Render. |
+| `CLOUDINARY_API_SECRET` | Backend | Cloudinary API secret; backend only, entered in Render. |
+| `CORS_ORIGINS` | Backend | Exact frontend origin. Blueprint default: `https://wardrobeai-frontend.onrender.com`; update if the actual frontend/custom domain differs. |
+| `COOKIE_SECURE` | Backend | `true` for HTTPS deployment. |
+| `COOKIE_SAME_SITE` | Backend | Blueprint sets `none` for separately hosted frontend/API cookies; requires `COOKIE_SECURE=true`. |
+| `SESSION_TTL_HOURS` | Backend | Blueprint sets `168`; session lifetime in hours. |
+| `PORT` | Backend | Assigned by Render and consumed by the Uvicorn start command. Do not set a fixed production port. |
+| `VITE_API_URL` | Frontend | Populated from the backend's public `RENDER_EXTERNAL_HOSTNAME` by the Blueprint. The frontend accepts a host or an `http(s)://` URL and includes credentials in API requests. |
+
+The backend uses credentialed CORS and exact origin matching. `COOKIE_SAME_SITE=none` plus `COOKIE_SECURE=true` allows cookies on cross-origin HTTPS requests. Login and registration return a CSRF token, and state-changing requests still require the matching CSRF cookie/header. For best browser compatibility, use frontend and API custom domains under the same registrable domain, such as `app.example.com` and `api.example.com`; browsers can block cookies in a genuinely third-party context regardless of CORS. For an all-same-site deployment, `COOKIE_SAME_SITE=lax` is also appropriate.
+
+### PostgreSQL initialization and migrations
+
+At startup, `init_db()` creates missing tables and applies limited compatibility `ALTER TABLE` additions. There is no Alembic history or separate migration command. A new Render database initializes on the first API start. This does not copy records from local SQLite or another database; back up and migrate any data needed before directing users to production. For future versioned schema changes, introduce and run a migration tool such as Alembic before deploying the application change.
+
+### Troubleshooting and production checklist
+
+- **API fails to start:** check build logs, `rootDir: backend`, the `app.main:app` entry point, and that the start command binds `0.0.0.0` on `$PORT`.
+- **Database connection or driver error:** confirm `DATABASE_URL` points to the Render database and the backend build installed `psycopg[binary]` from `backend/requirements.txt`. Do not use SQLite as the production database on an ephemeral service filesystem.
+- **CORS errors or failed API calls:** confirm `VITE_API_URL` points to the backend host, `CORS_ORIGINS` exactly matches the browser's frontend origin, and the backend was redeployed after configuration changes. Origins have no path or trailing slash.
+- **Session disappears after refresh or cookies are absent:** use HTTPS, `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=none` for cross-origin requests, and keep credentialed fetch enabled. Check browser cookie policy; same-site custom domains are recommended.
+- **Writes fail CSRF validation:** verify `/api/auth/csrf` succeeds, cookies are accepted, and the frontend sends the returned token in `X-CSRF-Token`. Do not disable CSRF checks.
+- **Image uploads fail:** check the three backend-only Cloudinary variables, `GET /api/health`, and Cloudinary account limits.
+- **Direct route refresh returns 404:** verify the static-site `/*` rewrite to `/index.html` is deployed.
+- [ ] `GET /health` returns 200 and reports the database as healthy.
+- [ ] Register, sign in, refresh to restore the session, and log out successfully.
+- [ ] Unauthenticated API requests are denied and writes without CSRF are rejected.
+- [ ] Upload an image and confirm its Cloudinary folder includes the authenticated user ID.
+- [ ] A second account cannot access, modify, delete, or get recommendations from the first account's items.
+- [ ] Accounts and wardrobe items persist after an API restart/redeploy.
+- [ ] `/login`, `/register`, and `/app` load on direct navigation and refresh.
+
+Cloudinary images use standard secure delivery URLs and are not private solely because the folder is user-specific. Do not use sensitive photographs unless access-controlled delivery is separately configured.
 
 ## Testing
 

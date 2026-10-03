@@ -6,6 +6,8 @@ The original unsigned upload widget remains in `src/cloudinary/UploadWidget.tsx`
 
 ## Setup
 
+On a fresh checkout, create `.env` from `.env.example` before starting the frontend so `VITE_API_URL` points to the local API.
+
 ```bash
 npm install
 npm run dev
@@ -13,6 +15,6 @@ npm run dev
 
 Start the API first. See the repository README and `backend/README.md`.
 
-`VITE_CLOUDINARY_CLOUD_NAME` is optional when the backend health check returns the cloud name. `VITE_API_BASE_URL` can stay empty during local development because Vite proxies `/api` to port 8000.
+`VITE_CLOUDINARY_CLOUD_NAME` is optional when the backend health check returns the cloud name. Set `VITE_API_URL` in `.env` to the backend origin (the example uses `http://localhost:8000`). For a separately hosted frontend, use the deployed backend origin; Render's Blueprint configures it from the backend service host.
 
-Copy `.env.example` to `.env` only if you need to override those values. Restart the dev server after changing `.env`.
+Restart the dev server after changing `.env`.

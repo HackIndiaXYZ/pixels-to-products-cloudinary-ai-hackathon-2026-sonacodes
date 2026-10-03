@@ -11,7 +11,10 @@ import type {
   WardrobeStats,
 } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+const configuredApiUrl = import.meta.env.VITE_API_URL?.trim() ?? '';
+const API_BASE = configuredApiUrl
+  ? `${/^https?:\/\//i.test(configuredApiUrl) ? '' : 'https://'}${configuredApiUrl}`.replace(/\/+$/, '')
+  : '';
 let csrfToken = '';
 
 export function setCsrfToken(token: string) {

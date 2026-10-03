@@ -25,11 +25,15 @@ Edit `.env`:
 | `COOKIE_SAME_SITE` | No | `lax` by default; use `none` with `COOKIE_SECURE=true` only for cross-site deployments |
 | `SESSION_TTL_HOURS` | No | Session lifetime, defaults to 168 hours |
 
+For PostgreSQL deployments, `psycopg[binary]` is installed from requirements and Render `postgresql://` URLs are normalized to `postgresql+psycopg://`.
+
 The API starts even when Cloudinary credentials are missing. `GET /api/health` then reports `cloudinary_configured: false`, and upload or delete requests return `503` without changing the database.
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+The Render production start command is `uvicorn app.main:app --host 0.0.0.0 --port $PORT`. Both `/health` (Render health check) and `/api/health` (application health) are available.
 
 Tables are created on startup. Existing SQLite wardrobe rows are migrated with a nullable `user_id`; they remain unowned and are never shown to new users. Back up `backend/data/wardrobe.db` before upgrading. The local development database was backed up to `backend/data/wardrobe.pre-auth-20261003.db` before migration. Legacy Cloudinary assets are not deleted; clean them up manually only after confirming they are not needed.
 

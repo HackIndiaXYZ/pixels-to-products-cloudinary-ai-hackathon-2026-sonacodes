@@ -4,7 +4,7 @@ import cloudinary.utils
 from sqlalchemy import inspect
 
 from app.config import Settings
-from app.database import engine
+from app.database import _sqlalchemy_database_url, engine
 from app.errors import CloudinaryUnavailable, InvalidAsset
 from app.services.cloudinary_service import VerifiedAsset
 
@@ -79,6 +79,18 @@ def test_health_reports_configuration(client):
     assert body["cloud_name"] == "test-cloud"
     assert "api_secret" not in response.text
     assert "test-secret-value" not in response.text
+
+
+def test_root_health_alias_and_postgres_url_normalization(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["database"] == "ok"
+    assert _sqlalchemy_database_url("postgres://user:pass@host/db") == (
+        "postgresql+psycopg://user:pass@host/db"
+    )
+    assert _sqlalchemy_database_url("postgresql://user:pass@host/db") == (
+        "postgresql+psycopg://user:pass@host/db"
+    )
 
 
 def test_health_when_cloudinary_is_missing(client, monkeypatch):
